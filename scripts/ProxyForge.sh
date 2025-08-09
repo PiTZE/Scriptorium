@@ -753,15 +753,49 @@ install_nginx_if_needed() {
 
 # Start nginx service using available service manager
 ensure_nginx_running() {
+    info "Checking nginx service status..."
+    
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl enable --now nginx || systemctl restart nginx
+        # Check if nginx is already running
+        if systemctl is-active --quiet nginx; then
+            info "nginx is already running"
+            return 0
+        fi
+        
+        info "Starting nginx service with systemctl..."
+        if ! systemctl enable --now nginx; then
+            error "Failed to enable and start nginx. Checking status..."
+            systemctl status nginx --no-pager -l
+            error "Checking nginx configuration..."
+            nginx -t
+            return 1
+        fi
     elif command -v service >/dev/null 2>&1; then
-        service nginx start || service nginx restart
+        info "Starting nginx service with service command..."
+        if ! service nginx start; then
+            error "Failed to start nginx with service command. Trying restart..."
+            if ! service nginx restart; then
+                error "Failed to restart nginx. Checking configuration..."
+                nginx -t
+                return 1
+            fi
+        fi
     elif [[ -x /etc/init.d/nginx ]]; then
-        /etc/init.d/nginx start || /etc/init.d/nginx restart
+        info "Starting nginx service with init.d script..."
+        if ! /etc/init.d/nginx start; then
+            error "Failed to start nginx with init.d. Trying restart..."
+            if ! /etc/init.d/nginx restart; then
+                error "Failed to restart nginx. Checking configuration..."
+                nginx -t
+                return 1
+            fi
+        fi
     else
         warn "Could not detect service manager to start nginx. Please start it manually."
+        return 1
     fi
+    
+    info "nginx service started successfully"
 }
 
 # Prompt for password with confirmation
@@ -833,6 +867,24 @@ write_nginx_conf() {
         confirm_or_exit "Config ${conf_path} exists. Overwrite?"
     fi
 
+    info "Writing nginx configuration to ${conf_path}..."
+    
+    # Verify required files exist before writing config
+    if [[ ! -f "${CERT_PATH}" ]]; then
+        error "SSL certificate not found: ${CERT_PATH}"
+        return 1
+    fi
+    
+    if [[ ! -f "${KEY_PATH}" ]]; then
+        error "SSL key not found: ${KEY_PATH}"
+        return 1
+    fi
+    
+    if [[ ! -f "${htfile}" ]]; then
+        error "htpasswd file not found: ${htfile}"
+        return 1
+    fi
+
     cat > "${conf_path}" <<EOF
 server {
     listen 0.0.0.0:${EXT_PORT} ssl http2;
@@ -860,13 +912,16 @@ server {
 }
 EOF
 
-    nginx -t
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl reload nginx
-    elif command -v service >/dev/null 2>&1; then
-        service nginx reload || service nginx restart
-    elif [[ -x /etc/init.d/nginx ]]; then
-        /etc/init.d/nginx reload || /etc/init.d/nginx restart
+    info "Testing nginx configuration..."
+    if ! nginx -t; then
+        error "nginx configuration test failed!"
+        return 1
+    fi
+    
+    info "Reloading nginx with new configuration..."
+    if ! reload_nginx_safe; then
+        error "Failed to reload nginx!"
+        return 1
     fi
 
     info "Wrote nginx config: ${conf_path}"
@@ -875,14 +930,34 @@ EOF
 
 # Check for port conflicts before binding
 check_port_conflict() {
+    info "Checking for port conflicts on port ${EXT_PORT}..."
+    
+    local conflict_found=false
+    local listening_process=""
+    
     if command -v ss >/dev/null 2>&1; then
-        if ss -tulpn | grep -E "LISTEN.+:${EXT_PORT}\b" >/dev/null 2>&1; then
-            warn "Something is already listening on port ${EXT_PORT}. Nginx may fail to bind."
+        listening_process=$(ss -tulpn | grep -E "LISTEN.+:${EXT_PORT}\b" || true)
+        if [[ -n "$listening_process" ]]; then
+            conflict_found=true
         fi
     elif command -v netstat >/dev/null 2>&1; then
-        if netstat -tulpn | grep -E "LISTEN.+:${EXT_PORT}\b" >/dev/null 2>&1; then
-            warn "Something is already listening on port ${EXT_PORT}. Nginx may fail to bind."
+        listening_process=$(netstat -tulpn | grep -E "LISTEN.+:${EXT_PORT}\b" || true)
+        if [[ -n "$listening_process" ]]; then
+            conflict_found=true
         fi
+    else
+        warn "Cannot check for port conflicts - neither ss nor netstat available"
+        return 0
+    fi
+    
+    if [[ "$conflict_found" == "true" ]]; then
+        error "Port ${EXT_PORT} is already in use:"
+        echo "$listening_process"
+        error "nginx will fail to bind to this port. Please choose a different port or stop the conflicting service."
+        return 1
+    else
+        info "Port ${EXT_PORT} is available"
+        return 0
     fi
 }
 
@@ -904,16 +979,32 @@ main() {
     info "External HTTPS port: ${EXT_PORT}"
     info "Username: ${USERNAME}"
 
-    check_port_conflict
+    # Check for port conflicts first - exit if conflict found
+    if ! check_port_conflict; then
+        error "Cannot proceed due to port conflict. Exiting."
+        exit 1
+    fi
+    
     install_nginx_if_needed
     ensure_dirs
-    ensure_nginx_running
+    
+    # Start nginx service before creating configuration
+    if ! ensure_nginx_running; then
+        error "Failed to start nginx service. Cannot proceed."
+        exit 1
+    fi
+    
     prompt_password
     write_htpasswd
     generate_self_signed_cert
-    write_nginx_conf
+    
+    # Write configuration and reload nginx
+    if ! write_nginx_conf; then
+        error "Failed to write nginx configuration. Exiting."
+        exit 1
+    fi
 
-    info "Done."
+    info "Done. Configuration created successfully!"
 }
 
 main "$@"
