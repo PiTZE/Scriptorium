@@ -541,7 +541,7 @@ select_config_file() {
     echo
     
     while true; do
-        read -r -p "Select configuration [0-$((${#configs[@]})]: " choice
+        read -r -p "Select configuration [0-${#configs[@]}]: " choice
         if [[ "$choice" == "0" ]]; then
             return
         elif [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#configs[@]} ]]; then
