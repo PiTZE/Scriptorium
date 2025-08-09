@@ -19,6 +19,7 @@ ASSUME_YES="false"
 CERT_PATH=""
 KEY_PATH=""
 CONF_NAME=""
+MENU_MODE="false"
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -35,19 +36,32 @@ Options:
   --cert PATH                Use existing certificate file (PEM/CRT)
   --key PATH                 Use existing private key file (PEM/KEY)
   --conf-name NAME           Custom nginx conf name (default: app_${APP_PORT}_to_${EXT_PORT}.conf)
+  -m, --menu                 Start interactive menu mode (default when no args)
   -h, --help                 Show this help
 
 Notes:
 - Must be run as root (use sudo).
 - Linux only. Not supported on macOS/Windows.
 - Generates a self-signed certificate if no cert/key provided.
+- Interactive menu mode starts by default when no arguments provided.
+- Use specific options to create configurations directly via command line.
 USAGE
 }
 
-error() { echo "[ERROR] $*" >&2; }
-info() { echo "[INFO] $*"; }
-warn() { echo "[WARN] $*"; }
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly NC='\033[0m'
 
+error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+menu_header() { echo -e "${CYAN}[MENU]${NC} $*"; }
+menu_item() { echo -e "${BLUE}  $*${NC}"; }
+
+# Validate root privileges
 require_root() {
     if [[ "$(id -u)" -ne 0 ]]; then
         error "This script must be run with root privileges. Re-run with: sudo $0 $*"
@@ -55,6 +69,7 @@ require_root() {
     fi
 }
 
+# Validate Linux operating system
 require_linux() {
     if [[ "$(uname -s)" != "Linux" ]]; then
         error "This script supports Linux only. Detected: $(uname -s)"
@@ -62,6 +77,7 @@ require_linux() {
     fi
 }
 
+# Parse command line arguments
 parse_args() {
     local has_args=false
     
@@ -75,13 +91,18 @@ parse_args() {
             --cert) CERT_PATH="${2:-}"; shift 2 ;;
             --key) KEY_PATH="${2:-}"; shift 2 ;;
             --conf-name) CONF_NAME="${2:-}"; shift 2 ;;
+            -m|--menu) MENU_MODE="true"; shift ;;
             -h|--help) usage; exit 0 ;;
             *) error "Unknown argument: $1"; usage; exit 2 ;;
         esac
     done
 
     if [[ "$has_args" == "false" ]]; then
-        interactive_setup
+        show_main_menu
+        exit 0
+    elif [[ "$MENU_MODE" == "true" ]]; then
+        show_main_menu
+        exit 0
     fi
 
     if [[ -z "${EXT_PORT}" ]]; then
@@ -93,6 +114,7 @@ parse_args() {
     fi
 }
 
+# Interactive configuration setup wizard
 interactive_setup() {
     info "No arguments provided. Starting interactive setup..."
     echo
@@ -155,6 +177,7 @@ interactive_setup() {
     fi
 }
 
+# Prompt for user confirmation or exit
 confirm_or_exit() {
     local prompt="$1"
     if [[ "${ASSUME_YES}" == "true" ]]; then
@@ -167,6 +190,7 @@ confirm_or_exit() {
     esac
 }
 
+# Detect available package manager
 detect_pkg_manager() {
     if command -v apt-get >/dev/null 2>&1; then
         echo "apt"
@@ -186,9 +210,513 @@ detect_pkg_manager() {
 }
 
 # ============================================================================
+# MENU SYSTEM FUNCTIONS
+# ============================================================================
+
+# Display ASCII art banner
+draw_ascii_art() {
+    echo -e "
+
+░▒▓███████▓▒░  ░▒▓█▓▒░       ░▒▓████████▓▒░ ░▒▓████████▓▒░ ░▒▓████████▓▒░
+░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▒░          ░▒▓█▓▒░            ░▒▓█▓▒░ ░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▒░          ░▒▓█▓▒░          ░▒▓██▓▒░  ░▒▓█▓▒░
+░▒▓███████▓▒░  ░▒▓█▓▒░          ░▒▓█▓▒░        ░▒▓██▓▒░    ░▒▓██████▓▒░
+░▒▓█▓▒░        ░▒▓█▓▒░          ░▒▓█▓▒░      ░▒▓██▓▒░      ░▒▓█▓▒░
+░▒▓█▓▒░        ░▒▓█▓▒░          ░▒▓█▓▒░     ░▒▓█▓▒░        ░▒▓█▓▒░
+░▒▓█▓▒░        ░▒▓█▓▒░          ░▒▓█▓▒░     ░▒▓████████▓▒░ ░▒▓████████▓▒░
+                                                                                                                                                                                                
+"
+}
+
+show_main_menu() {
+    while true; do
+        clear
+        draw_ascii_art
+        echo "============================================================================"
+        menu_header "ProxyForge Configuration Manager"
+        echo "============================================================================"
+        echo
+        menu_item "1) Setup new configuration"
+        menu_item "2) List all configurations"
+        menu_item "3) Modify existing configuration"
+        menu_item "4) Remove configuration"
+        menu_item "5) View configuration details"
+        menu_item "6) Test nginx configuration"
+        menu_item "7) Reload nginx"
+        menu_item "0) Exit"
+        echo
+        read -r -p "Select an option [0-7]: " choice
+        
+        case "$choice" in
+            1) menu_setup_new_config ;;
+            2) menu_list_configs ;;
+            3) menu_modify_config ;;
+            4) menu_remove_config ;;
+            5) menu_view_config_details ;;
+            6) menu_test_nginx ;;
+            7) menu_reload_nginx ;;
+            0) echo "Goodbye!"; exit 0 ;;
+            *) echo "Invalid option. Press Enter to continue..."; read -r ;;
+        esac
+    done
+}
+
+# Setup new proxy configuration
+menu_setup_new_config() {
+    clear
+    menu_header "Setup New Configuration"
+    echo "============================================================================"
+    echo
+    
+    APP_PORT="$DEFAULT_APP_PORT"
+    EXT_PORT="$DEFAULT_EXT_PORT"
+    USERNAME="$DEFAULT_USERNAME"
+    CERT_PATH=""
+    KEY_PATH=""
+    CONF_NAME=""
+    
+    interactive_setup
+    
+    check_port_conflict
+    install_nginx_if_needed
+    ensure_dirs
+    ensure_nginx_running
+    write_htpasswd
+    generate_self_signed_cert
+    write_nginx_conf
+    
+    info "Configuration created successfully!"
+    echo "Press Enter to return to menu..."
+    read -r
+}
+
+menu_list_configs() {
+    clear
+    menu_header "All ProxyForge Configurations"
+    echo "============================================================================"
+    echo
+    
+    if [[ ! -d "$CONF_DIR" ]]; then
+        warn "Nginx configuration directory not found: $CONF_DIR"
+        echo "Press Enter to continue..."
+        read -r
+        return
+    fi
+    
+    local configs
+    configs=($(find "$CONF_DIR" -name "app_*_to_*.conf" -type f 2>/dev/null | sort))
+    
+    if [[ ${#configs[@]} -eq 0 ]]; then
+        info "No ProxyForge configurations found."
+    else
+        printf "%-5s %-30s %-10s %-10s %-15s\n" "No." "Config File" "App Port" "Ext Port" "Status"
+        echo "------------------------------------------------------------------------"
+        
+        local i=1
+        for config in "${configs[@]}"; do
+            local basename
+            basename="$(basename "$config")"
+            local app_port ext_port
+            
+            if [[ "$basename" =~ app_([0-9]+)_to_([0-9]+)\.conf ]]; then
+                app_port="${BASH_REMATCH[1]}"
+                ext_port="${BASH_REMATCH[2]}"
+            else
+                app_port="N/A"
+                ext_port="N/A"
+            fi
+            
+            local status="Unknown"
+            if nginx -t -c /etc/nginx/nginx.conf >/dev/null 2>&1; then
+                status="Valid"
+            else
+                status="Invalid"
+            fi
+            
+            printf "%-5s %-30s %-10s %-10s %-15s\n" "$i" "$basename" "$app_port" "$ext_port" "$status"
+            ((i++))
+        done
+    fi
+    
+    echo
+    echo "Press Enter to continue..."
+    read -r
+}
+
+menu_modify_config() {
+    clear
+    menu_header "Modify Existing Configuration"
+    echo "============================================================================"
+    echo
+    
+    local config_file
+    config_file="$(select_config_file)"
+    if [[ -z "$config_file" ]]; then
+        return
+    fi
+    
+    local basename
+    basename="$(basename "$config_file")"
+    
+    if [[ "$basename" =~ app_([0-9]+)_to_([0-9]+)\.conf ]]; then
+        APP_PORT="${BASH_REMATCH[1]}"
+        EXT_PORT="${BASH_REMATCH[2]}"
+    else
+        error "Cannot parse configuration file name: $basename"
+        echo "Press Enter to continue..."
+        read -r
+        return
+    fi
+    
+    local htpasswd_file="${HTPASSWD_FILE_BASE}-${APP_PORT}"
+    if [[ -f "$htpasswd_file" ]]; then
+        USERNAME="$(cut -d: -f1 "$htpasswd_file" 2>/dev/null || echo "$DEFAULT_USERNAME")"
+    else
+        USERNAME="$DEFAULT_USERNAME"
+    fi
+    
+    info "Current configuration for $basename:"
+    info "  App Port: $APP_PORT"
+    info "  External Port: $EXT_PORT"
+    info "  Username: $USERNAME"
+    echo
+    
+    echo "What would you like to modify?"
+    menu_item "1) Change app port"
+    menu_item "2) Change external port"
+    menu_item "3) Change username"
+    menu_item "4) Change password"
+    menu_item "5) Regenerate SSL certificate"
+    menu_item "0) Back to main menu"
+    echo
+    
+    read -r -p "Select option [0-5]: " mod_choice
+    
+    case "$mod_choice" in
+        1) modify_app_port "$config_file" ;;
+        2) modify_external_port "$config_file" ;;
+        3) modify_username "$config_file" ;;
+        4) modify_password "$config_file" ;;
+        5) regenerate_ssl_cert "$config_file" ;;
+        0) return ;;
+        *) echo "Invalid option. Press Enter to continue..."; read -r ;;
+    esac
+}
+
+menu_remove_config() {
+    clear
+    menu_header "Remove Configuration"
+    echo "============================================================================"
+    echo
+    
+    local config_file
+    config_file="$(select_config_file)"
+    if [[ -z "$config_file" ]]; then
+        return
+    fi
+    
+    local basename
+    basename="$(basename "$config_file")"
+    
+    if [[ "$basename" =~ app_([0-9]+)_to_([0-9]+)\.conf ]]; then
+        local app_port="${BASH_REMATCH[1]}"
+        local ext_port="${BASH_REMATCH[2]}"
+    else
+        error "Cannot parse configuration file name: $basename"
+        echo "Press Enter to continue..."
+        read -r
+        return
+    fi
+    
+    warn "This will remove the following files:"
+    warn "  - Nginx config: $config_file"
+    warn "  - SSL certificate: ${SSL_DIR}/app_${ext_port}.crt"
+    warn "  - SSL key: ${SSL_DIR}/app_${ext_port}.key"
+    warn "  - htpasswd file: ${HTPASSWD_FILE_BASE}-${app_port}"
+    echo
+    
+    read -r -p "Are you sure you want to remove this configuration? [y/N]: " confirm
+    if [[ "$confirm" =~ ^[yY]([eE][sS])?$ ]]; then
+        remove_config_files "$app_port" "$ext_port"
+        reload_nginx_safe
+        info "Configuration removed successfully!"
+    else
+        info "Removal cancelled."
+    fi
+    
+    echo "Press Enter to continue..."
+    read -r
+}
+
+menu_view_config_details() {
+    clear
+    menu_header "Configuration Details"
+    echo "============================================================================"
+    echo
+    
+    local config_file
+    config_file="$(select_config_file)"
+    if [[ -z "$config_file" ]]; then
+        return
+    fi
+    
+    local basename
+    basename="$(basename "$config_file")"
+    
+    info "Configuration file: $basename"
+    info "Full path: $config_file"
+    echo
+    
+    if [[ -f "$config_file" ]]; then
+        echo "Configuration content:"
+        echo "----------------------------------------"
+        cat "$config_file"
+        echo "----------------------------------------"
+    else
+        error "Configuration file not found!"
+    fi
+    
+    echo
+    echo "Press Enter to continue..."
+    read -r
+}
+
+menu_test_nginx() {
+    clear
+    menu_header "Test Nginx Configuration"
+    echo "============================================================================"
+    echo
+    
+    info "Testing nginx configuration..."
+    if nginx -t; then
+        info "Nginx configuration test passed!"
+    else
+        error "Nginx configuration test failed!"
+    fi
+    
+    echo
+    echo "Press Enter to continue..."
+    read -r
+}
+
+menu_reload_nginx() {
+    clear
+    menu_header "Reload Nginx"
+    echo "============================================================================"
+    echo
+    
+    info "Reloading nginx..."
+    if reload_nginx_safe; then
+        info "Nginx reloaded successfully!"
+    else
+        error "Failed to reload nginx!"
+    fi
+    
+    echo
+    echo "Press Enter to continue..."
+    read -r
+}
+
+select_config_file() {
+    local configs
+    configs=($(find "$CONF_DIR" -name "app_*_to_*.conf" -type f 2>/dev/null | sort))
+    
+    if [[ ${#configs[@]} -eq 0 ]]; then
+        warn "No ProxyForge configurations found."
+        echo "Press Enter to continue..."
+        read -r
+        return
+    fi
+    
+    echo "Available configurations:"
+    echo
+    local i=1
+    for config in "${configs[@]}"; do
+        local basename
+        basename="$(basename "$config")"
+        menu_item "$i) $basename"
+        ((i++))
+    done
+    menu_item "0) Cancel"
+    echo
+    
+    while true; do
+        read -r -p "Select configuration [0-$((${#configs[@]})]: " choice
+        if [[ "$choice" == "0" ]]; then
+            return
+        elif [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#configs[@]} ]]; then
+            echo "${configs[$((choice-1))]}"
+            return
+        else
+            echo "Invalid selection. Please try again."
+        fi
+    done
+}
+
+# ============================================================================
+# CONFIGURATION MODIFICATION FUNCTIONS
+# ============================================================================
+
+modify_app_port() {
+    local config_file="$1"
+    local old_app_port="$APP_PORT"
+    
+    while true; do
+        read -r -p "Enter new app port [current: $APP_PORT]: " new_port
+        if [[ -z "$new_port" ]]; then
+            info "No changes made."
+            echo "Press Enter to continue..."
+            read -r
+            return
+        elif [[ "$new_port" =~ ^[0-9]+$ ]] && [[ "$new_port" -ge 1 ]] && [[ "$new_port" -le 65535 ]]; then
+            APP_PORT="$new_port"
+            break
+        else
+            echo "Please enter a valid port number (1-65535)."
+        fi
+    done
+    
+    sed -i "s|proxy_pass http://127.0.0.1:${old_app_port};|proxy_pass http://127.0.0.1:${APP_PORT};|" "$config_file"
+    
+    local old_htpasswd="${HTPASSWD_FILE_BASE}-${old_app_port}"
+    local new_htpasswd="${HTPASSWD_FILE_BASE}-${APP_PORT}"
+    if [[ -f "$old_htpasswd" ]]; then
+        mv "$old_htpasswd" "$new_htpasswd"
+    fi
+    
+    sed -i "s|auth_basic_user_file ${old_htpasswd};|auth_basic_user_file ${new_htpasswd};|" "$config_file"
+    
+    reload_nginx_safe
+    info "App port updated to $APP_PORT"
+    echo "Press Enter to continue..."
+    read -r
+}
+
+modify_external_port() {
+    local config_file="$1"
+    local old_ext_port="$EXT_PORT"
+    
+    while true; do
+        read -r -p "Enter new external port [current: $EXT_PORT]: " new_port
+        if [[ -z "$new_port" ]]; then
+            info "No changes made."
+            echo "Press Enter to continue..."
+            read -r
+            return
+        elif [[ "$new_port" =~ ^[0-9]+$ ]] && [[ "$new_port" -ge 1 ]] && [[ "$new_port" -le 65535 ]]; then
+            EXT_PORT="$new_port"
+            break
+        else
+            echo "Please enter a valid port number (1-65535)."
+        fi
+    done
+    
+    sed -i "s|listen 0.0.0.0:${old_ext_port} ssl http2;|listen 0.0.0.0:${EXT_PORT} ssl http2;|" "$config_file"
+    
+    local old_crt="${SSL_DIR}/app_${old_ext_port}.crt"
+    local old_key="${SSL_DIR}/app_${old_ext_port}.key"
+    local new_crt="${SSL_DIR}/app_${EXT_PORT}.crt"
+    local new_key="${SSL_DIR}/app_${EXT_PORT}.key"
+    
+    if [[ -f "$old_crt" ]]; then
+        mv "$old_crt" "$new_crt"
+    fi
+    if [[ -f "$old_key" ]]; then
+        mv "$old_key" "$new_key"
+    fi
+    
+    sed -i "s|ssl_certificate ${old_crt};|ssl_certificate ${new_crt};|" "$config_file"
+    sed -i "s|ssl_certificate_key ${old_key};|ssl_certificate_key ${new_key};|" "$config_file"
+    
+    reload_nginx_safe
+    info "External port updated to $EXT_PORT"
+    echo "Press Enter to continue..."
+    read -r
+}
+
+modify_username() {
+    local config_file="$1"
+    
+    read -r -p "Enter new username [current: $USERNAME]: " new_username
+    if [[ -z "$new_username" ]]; then
+        info "No changes made."
+        echo "Press Enter to continue..."
+        read -r
+        return
+    fi
+    
+    USERNAME="$new_username"
+    
+    prompt_password
+    write_htpasswd
+    
+    info "Username updated to $USERNAME"
+    echo "Press Enter to continue..."
+    read -r
+}
+
+modify_password() {
+    local config_file="$1"
+    
+    info "Changing password for user: $USERNAME"
+    prompt_password
+    write_htpasswd
+    
+    info "Password updated successfully"
+    echo "Press Enter to continue..."
+    read -r
+}
+
+regenerate_ssl_cert() {
+    local config_file="$1"
+    
+    info "Regenerating SSL certificate for port $EXT_PORT..."
+    
+    local crt="${SSL_DIR}/app_${EXT_PORT}.crt"
+    local key="${SSL_DIR}/app_${EXT_PORT}.key"
+    
+    rm -f "$crt" "$key"
+    generate_self_signed_cert
+    
+    reload_nginx_safe
+    info "SSL certificate regenerated successfully"
+    echo "Press Enter to continue..."
+    read -r
+}
+
+# Remove all configuration files for a proxy
+remove_config_files() {
+    local app_port="$1"
+    local ext_port="$2"
+    
+    local config_file="${CONF_DIR}/app_${app_port}_to_${ext_port}.conf"
+    rm -f "$config_file"
+    rm -f "${SSL_DIR}/app_${ext_port}.crt"
+    rm -f "${SSL_DIR}/app_${ext_port}.key"
+    rm -f "${HTPASSWD_FILE_BASE}-${app_port}"
+}
+
+reload_nginx_safe() {
+    if nginx -t >/dev/null 2>&1; then
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl reload nginx
+        elif command -v service >/dev/null 2>&1; then
+            service nginx reload || service nginx restart
+        elif [[ -x /etc/init.d/nginx ]]; then
+            /etc/init.d/nginx reload || /etc/init.d/nginx restart
+        fi
+        return 0
+    else
+        error "Nginx configuration test failed. Not reloading."
+        return 1
+    fi
+}
+
+# ============================================================================
 # CORE BUSINESS LOGIC
 # ============================================================================
 
+# Install nginx and openssl if not present
 install_nginx_if_needed() {
     if command -v nginx >/dev/null 2>&1; then
         info "nginx already installed."
@@ -229,6 +757,7 @@ install_nginx_if_needed() {
     esac
 }
 
+# Start nginx service using available service manager
 ensure_nginx_running() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl enable --now nginx || systemctl restart nginx
@@ -241,6 +770,7 @@ ensure_nginx_running() {
     fi
 }
 
+# Prompt for password with confirmation
 prompt_password() {
     local pass pass2
     while true; do
@@ -257,6 +787,7 @@ prompt_password() {
     done
 }
 
+# Generate htpasswd file for basic authentication
 write_htpasswd() {
     local file="${HTPASSWD_FILE_BASE}-${APP_PORT}"
     local hash
@@ -267,11 +798,13 @@ write_htpasswd() {
     info "Wrote htpasswd file: ${file}"
 }
 
+# Create required directories
 ensure_dirs() {
     mkdir -p "${CONF_DIR}"
     mkdir -p "${SSL_DIR}"
 }
 
+# Generate or use existing SSL certificate
 generate_self_signed_cert() {
     local crt="${SSL_DIR}/app_${EXT_PORT}.crt"
     local key="${SSL_DIR}/app_${EXT_PORT}.key"
@@ -297,6 +830,7 @@ generate_self_signed_cert() {
     KEY_PATH="${key}"
 }
 
+# Generate nginx configuration file
 write_nginx_conf() {
     local conf_path="${CONF_DIR}/${CONF_NAME}"
     local htfile="${HTPASSWD_FILE_BASE}-${APP_PORT}"
@@ -345,6 +879,7 @@ EOF
     info "Reverse proxy available at: https://<your-host>:${EXT_PORT}/ (self-signed cert)"
 }
 
+# Check for port conflicts before binding
 check_port_conflict() {
     if command -v ss >/dev/null 2>&1; then
         if ss -tulpn | grep -E "LISTEN.+:${EXT_PORT}\b" >/dev/null 2>&1; then
