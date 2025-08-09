@@ -751,6 +751,30 @@ install_nginx_if_needed() {
     esac
 }
 
+# Validate nginx installation and main configuration
+validate_nginx_setup() {
+    info "Validating nginx setup..."
+    
+    # Check if nginx binary exists and is executable
+    if ! command -v nginx >/dev/null 2>&1; then
+        error "nginx binary not found in PATH"
+        return 1
+    fi
+    
+    # Check nginx main configuration
+    info "Testing nginx main configuration..."
+    if ! nginx -t 2>/dev/null; then
+        error "nginx main configuration is invalid. Showing detailed error:"
+        nginx -t
+        error "Please fix nginx main configuration before proceeding"
+        return 1
+    fi
+    
+    # Check if nginx can bind to a test port (using nginx -t doesn't test binding)
+    info "nginx main configuration is valid"
+    return 0
+}
+
 # Start nginx service using available service manager
 ensure_nginx_running() {
     info "Checking nginx service status..."
@@ -763,10 +787,17 @@ ensure_nginx_running() {
         fi
         
         info "Starting nginx service with systemctl..."
-        if ! systemctl enable --now nginx; then
-            error "Failed to enable and start nginx. Checking status..."
-            systemctl status nginx --no-pager -l
-            error "Checking nginx configuration..."
+        if ! systemctl enable nginx 2>/dev/null; then
+            warn "Could not enable nginx service (may already be enabled)"
+        fi
+        
+        if ! systemctl start nginx; then
+            error "Failed to start nginx service. Checking status and logs..."
+            echo "=== systemctl status nginx ==="
+            systemctl status nginx --no-pager -l || true
+            echo "=== nginx error log (last 10 lines) ==="
+            tail -n 10 /var/log/nginx/error.log 2>/dev/null || echo "No error log found"
+            echo "=== nginx configuration test ==="
             nginx -t
             return 1
         fi
@@ -777,6 +808,8 @@ ensure_nginx_running() {
             if ! service nginx restart; then
                 error "Failed to restart nginx. Checking configuration..."
                 nginx -t
+                echo "=== nginx error log (last 10 lines) ==="
+                tail -n 10 /var/log/nginx/error.log 2>/dev/null || echo "No error log found"
                 return 1
             fi
         fi
@@ -787,6 +820,8 @@ ensure_nginx_running() {
             if ! /etc/init.d/nginx restart; then
                 error "Failed to restart nginx. Checking configuration..."
                 nginx -t
+                echo "=== nginx error log (last 10 lines) ==="
+                tail -n 10 /var/log/nginx/error.log 2>/dev/null || echo "No error log found"
                 return 1
             fi
         fi
@@ -796,6 +831,20 @@ ensure_nginx_running() {
     fi
     
     info "nginx service started successfully"
+    
+    # Give nginx a moment to fully start
+    sleep 2
+    
+    # Verify it's actually running
+    if command -v systemctl >/dev/null 2>&1; then
+        if ! systemctl is-active --quiet nginx; then
+            error "nginx service started but is not active"
+            systemctl status nginx --no-pager -l
+            return 1
+        fi
+    fi
+    
+    return 0
 }
 
 # Prompt for password with confirmation
@@ -826,10 +875,81 @@ write_htpasswd() {
     info "Wrote htpasswd file: ${file}"
 }
 
-# Create required directories
+# Create required directories with proper permissions
 ensure_dirs() {
-    mkdir -p "${CONF_DIR}"
-    mkdir -p "${SSL_DIR}"
+    info "Creating required directories..."
+    
+    # Create nginx config directory
+    if ! mkdir -p "${CONF_DIR}"; then
+        error "Failed to create nginx config directory: ${CONF_DIR}"
+        return 1
+    fi
+    
+    # Create SSL directory
+    if ! mkdir -p "${SSL_DIR}"; then
+        error "Failed to create SSL directory: ${SSL_DIR}"
+        return 1
+    fi
+    
+    # Ensure proper permissions
+    chmod 755 "${CONF_DIR}" 2>/dev/null || true
+    chmod 755 "${SSL_DIR}" 2>/dev/null || true
+    
+    # Check if directories are writable
+    if [[ ! -w "${CONF_DIR}" ]]; then
+        error "Cannot write to nginx config directory: ${CONF_DIR}"
+        return 1
+    fi
+    
+    if [[ ! -w "${SSL_DIR}" ]]; then
+        error "Cannot write to SSL directory: ${SSL_DIR}"
+        return 1
+    fi
+    
+    info "Directories created successfully"
+    return 0
+}
+
+# Check for common nginx setup issues
+check_nginx_prerequisites() {
+    info "Checking nginx prerequisites..."
+    
+    # Check if running as root
+    if [[ "$(id -u)" -ne 0 ]]; then
+        error "This script must be run as root for nginx configuration"
+        return 1
+    fi
+    
+    # Check if nginx config directory exists and is accessible
+    if [[ ! -d "/etc/nginx" ]]; then
+        error "nginx configuration directory /etc/nginx does not exist"
+        error "nginx may not be properly installed"
+        return 1
+    fi
+    
+    # Check if nginx.conf exists
+    if [[ ! -f "/etc/nginx/nginx.conf" ]]; then
+        error "nginx main configuration file /etc/nginx/nginx.conf not found"
+        return 1
+    fi
+    
+    # Check if conf.d directory exists or can be created
+    if [[ ! -d "/etc/nginx/conf.d" ]]; then
+        info "Creating /etc/nginx/conf.d directory..."
+        if ! mkdir -p "/etc/nginx/conf.d"; then
+            error "Failed to create /etc/nginx/conf.d directory"
+            return 1
+        fi
+    fi
+    
+    # Check if nginx main config includes conf.d
+    if ! grep -q "include.*conf\.d.*\.conf" /etc/nginx/nginx.conf; then
+        warn "nginx.conf may not include files from conf.d directory"
+        warn "You may need to add: include /etc/nginx/conf.d/*.conf;"
+    fi
+    
+    info "nginx prerequisites check passed"
+    return 0
 }
 
 # Generate or use existing SSL certificate
@@ -979,21 +1099,40 @@ main() {
     info "External HTTPS port: ${EXT_PORT}"
     info "Username: ${USERNAME}"
 
-    # Check for port conflicts first - exit if conflict found
+    # Install nginx first
+    install_nginx_if_needed
+    
+    # Check nginx prerequisites
+    if ! check_nginx_prerequisites; then
+        error "nginx prerequisites check failed. Cannot proceed."
+        exit 1
+    fi
+    
+    # Create required directories
+    if ! ensure_dirs; then
+        error "Failed to create required directories. Cannot proceed."
+        exit 1
+    fi
+    
+    # Validate nginx setup before proceeding
+    if ! validate_nginx_setup; then
+        error "nginx setup validation failed. Cannot proceed."
+        exit 1
+    fi
+    
+    # Check for port conflicts - exit if conflict found
     if ! check_port_conflict; then
         error "Cannot proceed due to port conflict. Exiting."
         exit 1
     fi
     
-    install_nginx_if_needed
-    ensure_dirs
-    
-    # Start nginx service before creating configuration
+    # Start nginx service with basic configuration
     if ! ensure_nginx_running; then
         error "Failed to start nginx service. Cannot proceed."
         exit 1
     fi
     
+    # Create authentication and SSL files
     prompt_password
     write_htpasswd
     generate_self_signed_cert
