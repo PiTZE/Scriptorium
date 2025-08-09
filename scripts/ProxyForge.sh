@@ -128,6 +128,20 @@ interactive_setup() {
         USERNAME="$input_username"
     fi
     
+    local pass pass2
+    while true; do
+        read -r -s -p "Enter password for basic auth user '${USERNAME}': " pass || { echo; error "Failed to read password input"; exit 1; }; echo
+        read -r -s -p "Confirm password: " pass2 || { echo; error "Failed to read password confirmation"; exit 1; }; echo
+        if [[ "$pass" != "$pass2" ]]; then
+            echo "Passwords do not match. Try again."
+        elif [[ -z "$pass" ]]; then
+            echo "Password cannot be empty."
+        else
+            BASIC_AUTH_PASSWORD="$pass"
+            break
+        fi
+    done
+    
     echo
     info "Configuration Summary:"
     info "  Local app port: ${APP_PORT}"
@@ -230,13 +244,8 @@ ensure_nginx_running() {
 prompt_password() {
     local pass pass2
     while true; do
-        if [[ "${ASSUME_YES}" == "true" && -n "${BASIC_AUTH_PASSWORD:-}" ]]; then
-            pass="$BASIC_AUTH_PASSWORD"
-            pass2="$BASIC_AUTH_PASSWORD"
-        else
-            read -r -s -p "Enter password for basic auth user '${USERNAME}': " pass; echo
-            read -r -s -p "Confirm password: " pass2; echo
-        fi
+        read -r -s -p "Enter password for basic auth user '${USERNAME}': " pass || { echo; error "Failed to read password input"; exit 1; }; echo
+        read -r -s -p "Confirm password: " pass2 || { echo; error "Failed to read password confirmation"; exit 1; }; echo
         if [[ "$pass" != "$pass2" ]]; then
             echo "Passwords do not match. Try again."
         elif [[ -z "$pass" ]]; then
