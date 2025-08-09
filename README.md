@@ -21,14 +21,26 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/PiTZE/Scriptorium/m
 
 **Usage:**
 ```bash
-# Basic usage (proxies port 7314 to HTTPS)
+# Interactive mode (prompts for configuration)
 sudo ./scripts/ProxyForge.sh
 
-# Custom ports and username
+# Command-line mode with custom ports and username
 sudo ./scripts/ProxyForge.sh -a 3000 -e 8443 -u admin
 
 # Use existing SSL certificate
 sudo ./scripts/ProxyForge.sh --cert /path/to/cert.pem --key /path/to/key.pem
+
+# Non-interactive mode (skip prompts)
+sudo ./scripts/ProxyForge.sh -a 8080 -e 443 -y
+```
+
+**Interactive Setup:**
+When run without arguments, ProxyForge will guide you through an interactive setup:
+- Prompts for local application port
+- Prompts for external HTTPS port
+- Prompts for basic auth username
+- Shows configuration summary before proceeding
+- Confirms setup before making system changes
 ```
 
 ## Requirements
