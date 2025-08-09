@@ -19,7 +19,6 @@ ASSUME_YES="false"
 CERT_PATH=""
 KEY_PATH=""
 CONF_NAME=""
-MENU_MODE="false"
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -36,7 +35,6 @@ Options:
   --cert PATH                Use existing certificate file (PEM/CRT)
   --key PATH                 Use existing private key file (PEM/KEY)
   --conf-name NAME           Custom nginx conf name (default: app_${APP_PORT}_to_${EXT_PORT}.conf)
-  -m, --menu                 Start interactive menu mode (default when no args)
   -h, --help                 Show this help
 
 Notes:
@@ -91,16 +89,12 @@ parse_args() {
             --cert) CERT_PATH="${2:-}"; shift 2 ;;
             --key) KEY_PATH="${2:-}"; shift 2 ;;
             --conf-name) CONF_NAME="${2:-}"; shift 2 ;;
-            -m|--menu) MENU_MODE="true"; shift ;;
             -h|--help) usage; exit 0 ;;
             *) error "Unknown argument: $1"; usage; exit 2 ;;
         esac
     done
 
     if [[ "$has_args" == "false" ]]; then
-        show_main_menu
-        exit 0
-    elif [[ "$MENU_MODE" == "true" ]]; then
         show_main_menu
         exit 0
     fi
