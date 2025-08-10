@@ -380,8 +380,18 @@ configure_firewall() {
             info "Allowing localhost access to port ${app_port}..."
             ufw allow from 127.0.0.1 to any port "${app_port}"
             
-            info "Blocking external access to port ${app_port}..."
-            ufw deny from any to any port "${app_port}"
+            info "Blocking external access to port ${app_port} (excluding proxy port ${proxy_port})..."
+            if [[ "${app_port}" != "${proxy_port}" ]]; then
+                ufw deny from any to any port "${app_port}"
+            else
+                # If ports are the same, only deny non-HTTPS traffic to avoid blocking the proxy
+                ufw deny "${app_port}/tcp"
+                ufw allow "${proxy_port}/tcp"
+            fi
+            
+            # Ensure proxy port is allowed after any deny rules
+            info "Re-confirming access to authenticated proxy on port ${proxy_port}..."
+            ufw allow "${proxy_port}"
             
             info "Firewall configured successfully!"
             info "  - Blocked: port ${app_port} (direct app access)"
