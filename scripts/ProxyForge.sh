@@ -378,13 +378,13 @@ configure_firewall() {
             fi
             
             info "Removing any existing allow rules for port ${app_port}..."
-            # Remove all existing allow rules for this port
-            while ufw status numbered | grep -q "ALLOW.*${app_port}"; do
+            # Remove all existing allow rules for this port (except localhost-specific ones)
+            while ufw status numbered | grep -E "ALLOW.*${app_port}[^0-9]" | grep -v "127.0.0.1"; do
                 local rule_num
-                rule_num=$(ufw status numbered | grep "ALLOW.*${app_port}" | head -1 | grep -o '^\[[0-9]*\]' | tr -d '[]')
+                rule_num=$(ufw status numbered | grep -E "ALLOW.*${app_port}[^0-9]" | grep -v "127.0.0.1" | head -1 | grep -o '^\[[0-9]*\]' | tr -d '[]')
                 if [[ -n "$rule_num" ]]; then
+                    info "Removing existing allow rule #${rule_num} for port ${app_port}"
                     ufw --force delete "${rule_num}"
-                    info "Removed existing allow rule #${rule_num} for port ${app_port}"
                 else
                     break
                 fi
@@ -1253,8 +1253,8 @@ write_htpasswd() {
     local hash
     hash="$(openssl passwd -apr1 "${BASIC_AUTH_PASSWORD}")"
     printf "%s:%s\n" "${USERNAME}" "${hash}" > "${file}"
-    chmod 640 "${file}"
-    chown root:root "${file}" || true
+    chmod 644 "${file}"
+    chown root:www-data "${file}" || true
     info "Wrote htpasswd file: ${file}"
     
     if [[ "${ASSUME_YES}" == "true" ]]; then
