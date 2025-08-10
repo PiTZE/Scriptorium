@@ -1200,6 +1200,16 @@ ensure_nginx_running() {
 
 # Prompt for password with confirmation
 prompt_password() {
+    if [[ "${ASSUME_YES}" == "true" && -z "${BASIC_AUTH_PASSWORD:-}" ]]; then
+        BASIC_AUTH_PASSWORD="$(openssl rand -base64 12)"
+        info "Generated random password for user '${USERNAME}'"
+        return 0
+    fi
+    
+    if [[ -n "${BASIC_AUTH_PASSWORD:-}" ]]; then
+        return 0
+    fi
+    
     local pass pass2
     while true; do
         read -r -s -p "Enter password for basic auth user '${USERNAME}': " pass || { echo; error "Failed to read password input"; exit 1; }; echo
@@ -1224,6 +1234,10 @@ write_htpasswd() {
     chmod 640 "${file}"
     chown root:root "${file}" || true
     info "Wrote htpasswd file: ${file}"
+    
+    if [[ "${ASSUME_YES}" == "true" ]]; then
+        info "Basic auth credentials - Username: ${USERNAME}, Password: ${BASIC_AUTH_PASSWORD}"
+    fi
 }
 
 # Create required directories with proper permissions
