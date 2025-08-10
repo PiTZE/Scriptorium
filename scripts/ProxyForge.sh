@@ -19,11 +19,13 @@ ASSUME_YES="false"
 CERT_PATH=""
 KEY_PATH=""
 CONF_NAME=""
+APP_BINDING=""
 
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
 
+# Display usage information and command line options
 usage() { cat <<'USAGE'
 Usage: ProxyForge.sh [options]
 
@@ -53,10 +55,19 @@ readonly BLUE='\033[0;34m'
 readonly CYAN='\033[0;36m'
 readonly NC='\033[0m'
 
+# Output error message to stderr
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+# Output info message with green formatting
 info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+
+# Output warning message with yellow formatting
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+
+# Output menu header with cyan formatting
 menu_header() { echo -e "${CYAN}[MENU]${NC} $*"; }
+
+# Output menu item with blue formatting
 menu_item() { echo -e "${BLUE}  $*${NC}"; }
 
 # Validate root privileges
@@ -110,8 +121,23 @@ parse_args() {
 
 # Interactive configuration setup wizard
 interactive_setup() {
-    info "No arguments provided. Starting interactive setup..."
+    info "Starting interactive setup..."
     echo
+    
+    # Ask about app binding first
+    local app_binding=""
+    while true; do
+        echo "Is your application currently listening on:"
+        echo "  1) localhost/127.0.0.1 (local only)"
+        echo "  2) 0.0.0.0 (all interfaces)"
+        read -r -p "Select option [1-2]: " binding_choice
+        
+        case "$binding_choice" in
+            1) app_binding="localhost"; break ;;
+            2) app_binding="0.0.0.0"; break ;;
+            *) echo "Please select 1 or 2." ;;
+        esac
+    done
     
     while true; do
         read -r -p "What port is your local application running on? [default: ${DEFAULT_APP_PORT}]: " input_port
@@ -126,18 +152,37 @@ interactive_setup() {
         fi
     done
     
-    while true; do
-        read -r -p "What external HTTPS port should the proxy listen on? [default: same as app port (${APP_PORT})]: " input_ext_port
-        if [[ -z "$input_ext_port" ]]; then
-            EXT_PORT="$APP_PORT"
-            break
-        elif [[ "$input_ext_port" =~ ^[0-9]+$ ]] && [[ "$input_ext_port" -ge 1 ]] && [[ "$input_ext_port" -le 65535 ]]; then
-            EXT_PORT="$input_ext_port"
-            break
-        else
-            echo "Please enter a valid port number (1-65535)."
-        fi
-    done
+    # Handle external port based on app binding
+    if [[ "$app_binding" == "localhost" ]]; then
+        # For localhost apps, proxy can use the same port
+        while true; do
+            read -r -p "What external HTTPS port should the proxy listen on? [default: same as app port (${APP_PORT})]: " input_ext_port
+            if [[ -z "$input_ext_port" ]]; then
+                EXT_PORT="$APP_PORT"
+                break
+            elif [[ "$input_ext_port" =~ ^[0-9]+$ ]] && [[ "$input_ext_port" -ge 1 ]] && [[ "$input_ext_port" -le 65535 ]]; then
+                EXT_PORT="$input_ext_port"
+                break
+            else
+                echo "Please enter a valid port number (1-65535)."
+            fi
+        done
+    else
+        # For 0.0.0.0 apps, suggest app_port + 1 as default
+        local suggested_port=$((APP_PORT + 1))
+        while true; do
+            read -r -p "What external HTTPS port should the authenticated proxy listen on? [default: ${suggested_port}]: " input_ext_port
+            if [[ -z "$input_ext_port" ]]; then
+                EXT_PORT="$suggested_port"
+                break
+            elif [[ "$input_ext_port" =~ ^[0-9]+$ ]] && [[ "$input_ext_port" -ge 1 ]] && [[ "$input_ext_port" -le 65535 ]]; then
+                EXT_PORT="$input_ext_port"
+                break
+            else
+                echo "Please enter a valid port number (1-65535)."
+            fi
+        done
+    fi
     
     read -r -p "Basic auth username [default: ${DEFAULT_USERNAME}]: " input_username
     if [[ -n "$input_username" ]]; then
@@ -160,11 +205,24 @@ interactive_setup() {
     
     echo
     info "Configuration Summary:"
+    info "  App binding: ${app_binding}"
     info "  Local app port: ${APP_PORT}"
     info "  External HTTPS port: ${EXT_PORT}"
     info "  Basic auth username: ${USERNAME}"
     info "  Nginx config file: app_${APP_PORT}_to_${EXT_PORT}.conf"
+    
+    if [[ "$app_binding" == "0.0.0.0" ]]; then
+        echo
+        warn "Firewall Configuration:"
+        warn "  - Will BLOCK direct access to port ${APP_PORT}"
+        warn "  - Will ALLOW authenticated access on port ${EXT_PORT}"
+        warn "  - Your app will only be accessible through the authenticated proxy"
+    fi
+    
     echo
+    
+    # Store app binding for later use
+    APP_BINDING="$app_binding"
     
     if [[ "${ASSUME_YES}" != "true" ]]; then
         confirm_or_exit "Proceed with this configuration?"
@@ -203,11 +261,271 @@ detect_pkg_manager() {
     fi
 }
 
+# Install UFW firewall if not present
+install_ufw_if_needed() {
+    if command -v ufw >/dev/null 2>&1; then
+        info "ufw already installed."
+        return
+    fi
+
+    local pm
+    pm="$(detect_pkg_manager)"
+    if [[ -z "$pm" ]]; then
+        error "No supported package manager found. Install ufw manually and re-run."
+        exit 1
+    fi
+
+    info "Installing ufw using ${pm}..."
+    case "$pm" in
+        apt)
+            apt-get update -y
+            DEBIAN_FRONTEND=noninteractive apt-get install -y ufw
+            ;;
+        dnf)
+            dnf install -y ufw
+            ;;
+        yum)
+            yum install -y epel-release || true
+            yum install -y ufw
+            ;;
+        zypper)
+            zypper --non-interactive refresh
+            zypper --non-interactive install ufw
+            ;;
+        pacman)
+            pacman -Sy --noconfirm ufw
+            ;;
+        apk)
+            apk update
+            apk add --no-cache ufw
+            ;;
+    esac
+}
+
+# Configure firewall for app protection with safety checks
+configure_firewall() {
+    local app_port="$1"
+    local proxy_port="$2"
+    local app_binding="$3"
+    
+    install_ufw_if_needed
+    
+    local ufw_was_inactive=false
+    if ! ufw status | grep -q "Status: active"; then
+        ufw_was_inactive=true
+        
+        if [[ "$app_binding" == "localhost" ]]; then
+            warn "UFW firewall is currently DISABLED."
+            warn "For localhost apps, we recommend enabling UFW for better security."
+            echo
+            warn "⚠️  SECURITY WARNING ⚠️"
+            warn "Enabling UFW may lock you out if SSH or other essential services aren't allowed!"
+            warn "Make sure you have:"
+            warn "  - SSH access configured (usually port 22)"
+            warn "  - Any other services you need to access this server"
+            echo
+            
+            check_and_warn_unprotected_services
+            
+            echo
+            read -r -p "Enable UFW firewall? [y/N]: " enable_ufw
+            case "$enable_ufw" in
+                y|Y|yes|YES)
+                    info "Enabling UFW firewall..."
+                    ufw --force enable
+                    ;;
+                *)
+                    warn "UFW remains disabled. Your server security may be compromised."
+                    warn "Consider enabling UFW manually after reviewing your service requirements."
+                    return 0
+                    ;;
+            esac
+        else
+            info "Enabling UFW firewall (required for 0.0.0.0 app protection)..."
+            ufw --force enable
+        fi
+    fi
+    
+    if [[ "$app_binding" == "localhost" ]]; then
+        info "Configuring firewall for localhost app..."
+        
+        info "Allowing access to authenticated proxy on port ${proxy_port}..."
+        ufw allow "${proxy_port}"
+        
+        if [[ "$ufw_was_inactive" == "true" ]]; then
+            info "Adding common service ports to UFW for safety..."
+            add_common_service_ports
+        fi
+        
+        info "Firewall configured for localhost app!"
+        info "  - Allowed: port ${proxy_port} (authenticated HTTPS proxy)"
+        info "  - Original app on port ${app_port} remains on localhost (secure by default)"
+        
+    else
+        info "Configuring firewall to protect 0.0.0.0 app on port ${app_port}..."
+        
+        info "Allowing access to authenticated proxy on port ${proxy_port}..."
+        ufw allow "${proxy_port}"
+        
+        info "Testing authenticated proxy accessibility..."
+        if test_proxy_accessibility "${proxy_port}"; then
+            info "Authenticated proxy is working correctly."
+            
+            if ufw status numbered | grep -q "ALLOW.*${app_port}"; then
+                info "Found existing UFW rule allowing port ${app_port}, removing it..."
+                
+                local rule_num
+                rule_num=$(ufw status numbered | grep "ALLOW.*${app_port}" | head -1 | grep -o '^\[[0-9]*\]' | tr -d '[]')
+                if [[ -n "$rule_num" ]]; then
+                    ufw --force delete "${rule_num}"
+                    info "Removed existing allow rule for port ${app_port}"
+                fi
+            fi
+            
+            info "Blocking direct access to port ${app_port}..."
+            ufw deny "${app_port}"
+            
+            info "Firewall configured successfully!"
+            info "  - Blocked: port ${app_port} (direct app access)"
+            info "  - Allowed: port ${proxy_port} (authenticated proxy)"
+        else
+            warn "Authenticated proxy test failed! NOT blocking original app port for safety."
+            warn "Your app remains accessible on port ${app_port} without authentication."
+            warn "Please check the nginx configuration and try again."
+            return 1
+        fi
+    fi
+}
+
+# Check for unprotected services and warn user
+check_and_warn_unprotected_services() {
+    info "Scanning for services that may need UFW rules..."
+    
+    local unprotected_services=()
+    
+    if command -v ss >/dev/null 2>&1; then
+        local listening_ports
+        listening_ports=$(ss -tulpn | grep "LISTEN.*0.0.0.0:" | grep -o ":([0-9]*)" | tr -d ":(" | tr -d ")" | sort -n | uniq)
+        
+        for port in $listening_ports; do
+            if ! ufw status | grep -q "ALLOW.*${port}"; then
+                local service_info
+                service_info=$(ss -tulpn | grep ":${port}" | head -1)
+                unprotected_services+=("Port ${port}: ${service_info}")
+            fi
+        done
+    elif command -v netstat >/dev/null 2>&1; then
+        local listening_ports
+        listening_ports=$(netstat -tulpn | grep "LISTEN.*0.0.0.0:" | grep -o ":([0-9]*)" | tr -d ":(" | tr -d ")" | sort -n | uniq)
+        
+        for port in $listening_ports; do
+            if ! ufw status | grep -q "ALLOW.*${port}"; then
+                local service_info
+                service_info=$(netstat -tulpn | grep ":${port}" | head -1)
+                unprotected_services+=("Port ${port}: ${service_info}")
+            fi
+        done
+    fi
+    
+    if [[ ${#unprotected_services[@]} -gt 0 ]]; then
+        warn "Found services listening on 0.0.0.0 that are NOT in UFW allow list:"
+        for service in "${unprotected_services[@]}"; do
+            warn "  - ${service}"
+        done
+        echo
+        warn "These services will be BLOCKED when UFW is enabled!"
+        warn "Add UFW rules for essential services before enabling UFW:"
+        warn "  Example: ufw allow 22/tcp    # for SSH"
+        warn "  Example: ufw allow 80/tcp    # for HTTP"
+        warn "  Example: ufw allow 443/tcp   # for HTTPS"
+    else
+        info "No unprotected services found listening on 0.0.0.0"
+    fi
+}
+
+# Add common service ports to UFW for safety
+add_common_service_ports() {
+    local common_ports=("22" "80" "443")
+    local added_ports=()
+    
+    for port in "${common_ports[@]}"; do
+        if command -v ss >/dev/null 2>&1; then
+            if ss -tulpn | grep -q "LISTEN.*:${port}"; then
+                if ! ufw status | grep -q "ALLOW.*${port}"; then
+                    info "Adding UFW rule for commonly used port ${port}..."
+                    ufw allow "${port}"
+                    added_ports+=("${port}")
+                fi
+            fi
+        elif command -v netstat >/dev/null 2>&1; then
+            if netstat -tulpn | grep -q "LISTEN.*:${port}"; then
+                if ! ufw status | grep -q "ALLOW.*${port}"; then
+                    info "Adding UFW rule for commonly used port ${port}..."
+                    ufw allow "${port}"
+                    added_ports+=("${port}")
+                fi
+            fi
+        fi
+    done
+    
+    if [[ ${#added_ports[@]} -gt 0 ]]; then
+        info "Added UFW rules for ports: ${added_ports[*]}"
+    fi
+}
+# Test if the authenticated proxy is accessible
+test_proxy_accessibility() {
+    local proxy_port="$1"
+    
+    info "Testing proxy on port ${proxy_port}..."
+    
+    if command -v curl >/dev/null 2>&1; then
+        local response_code
+        response_code=$(curl -k -s -o /dev/null -w "%{http_code}" "https://localhost:${proxy_port}/" --connect-timeout 5 --max-time 10 2>/dev/null || echo "000")
+        
+        if [[ "$response_code" == "401" ]]; then
+            info "Proxy responding correctly with 401 Unauthorized (authentication required)"
+            return 0
+        elif [[ "$response_code" == "200" ]]; then
+            warn "Proxy responding with 200 OK (authentication may not be working)"
+            return 1
+        else
+            warn "Proxy test failed with response code: ${response_code}"
+            return 1
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if wget --no-check-certificate --timeout=10 --tries=1 -q -O /dev/null "https://localhost:${proxy_port}/" 2>/dev/null; then
+            warn "Proxy responding but authentication status unclear (wget doesn't show auth errors clearly)"
+            return 0
+        else
+            local wget_exit_code=$?
+            if [[ "$wget_exit_code" == "6" ]]; then
+                info "Proxy responding correctly with authentication required"
+                return 0
+            else
+                warn "Proxy test failed with wget exit code: ${wget_exit_code}"
+                return 1
+            fi
+        fi
+    elif command -v nc >/dev/null 2>&1; then
+        if timeout 5 nc -z localhost "${proxy_port}" 2>/dev/null; then
+            info "Proxy port is accessible (basic connectivity test)"
+            return 0
+        else
+            warn "Cannot connect to proxy port ${proxy_port}"
+            return 1
+        fi
+    else
+        warn "No testing tools available (curl, wget, nc). Skipping proxy test."
+        warn "Proceeding with firewall configuration (use with caution)"
+        return 0
+    fi
+}
+
 # ============================================================================
 # MENU SYSTEM FUNCTIONS
 # ============================================================================
 
-# Display ASCII art banner
+# Display ASCII art banner for menu system
 draw_ascii_art() {
     echo -e "
 
@@ -222,6 +540,7 @@ draw_ascii_art() {
 "
 }
 
+# Display main menu and handle user selections
 show_main_menu() {
     while true; do
         clear
@@ -255,7 +574,7 @@ show_main_menu() {
     done
 }
 
-# Setup new proxy configuration
+# Setup new proxy configuration through interactive menu
 menu_setup_new_config() {
     clear
     menu_header "Setup New Configuration"
@@ -284,6 +603,7 @@ menu_setup_new_config() {
     read -r
 }
 
+# List all existing ProxyForge configurations
 menu_list_configs() {
     clear
     menu_header "All ProxyForge Configurations"
@@ -337,6 +657,7 @@ menu_list_configs() {
     read -r
 }
 
+# Modify existing configuration through interactive menu
 menu_modify_config() {
     clear
     menu_header "Modify Existing Configuration"
@@ -397,6 +718,7 @@ menu_modify_config() {
     esac
 }
 
+# Remove existing configuration and associated files
 menu_remove_config() {
     clear
     menu_header "Remove Configuration"
@@ -442,6 +764,7 @@ menu_remove_config() {
     read -r
 }
 
+# View detailed configuration file contents
 menu_view_config_details() {
     clear
     menu_header "Configuration Details"
@@ -475,6 +798,7 @@ menu_view_config_details() {
     read -r
 }
 
+# Test nginx configuration validity
 menu_test_nginx() {
     clear
     menu_header "Test Nginx Configuration"
@@ -493,6 +817,7 @@ menu_test_nginx() {
     read -r
 }
 
+# Reload nginx service safely
 menu_reload_nginx() {
     clear
     menu_header "Reload Nginx"
@@ -511,6 +836,7 @@ menu_reload_nginx() {
     read -r
 }
 
+# Select configuration file from available options
 select_config_file() {
     local configs
     configs=($(find "$CONF_DIR" -name "app_*_to_*.conf" -type f 2>/dev/null | sort))
@@ -551,6 +877,7 @@ select_config_file() {
 # CONFIGURATION MODIFICATION FUNCTIONS
 # ============================================================================
 
+# Modify application port in existing configuration
 modify_app_port() {
     local config_file="$1"
     local old_app_port="$APP_PORT"
@@ -586,6 +913,7 @@ modify_app_port() {
     read -r
 }
 
+# Modify external port in existing configuration
 modify_external_port() {
     local config_file="$1"
     local old_ext_port="$EXT_PORT"
@@ -628,6 +956,7 @@ modify_external_port() {
     read -r
 }
 
+# Modify basic auth username in existing configuration
 modify_username() {
     local config_file="$1"
     
@@ -649,6 +978,7 @@ modify_username() {
     read -r
 }
 
+# Modify basic auth password in existing configuration
 modify_password() {
     local config_file="$1"
     
@@ -661,6 +991,7 @@ modify_password() {
     read -r
 }
 
+# Regenerate SSL certificate for existing configuration
 regenerate_ssl_cert() {
     local config_file="$1"
     
@@ -690,6 +1021,7 @@ remove_config_files() {
     rm -f "${HTPASSWD_FILE_BASE}-${app_port}"
 }
 
+# Safely reload nginx after configuration test
 reload_nginx_safe() {
     if nginx -t >/dev/null 2>&1; then
         if command -v systemctl >/dev/null 2>&1; then
@@ -755,13 +1087,11 @@ install_nginx_if_needed() {
 validate_nginx_setup() {
     info "Validating nginx setup..."
     
-    # Check if nginx binary exists and is executable
     if ! command -v nginx >/dev/null 2>&1; then
         error "nginx binary not found in PATH"
         return 1
     fi
     
-    # Check nginx main configuration
     info "Testing nginx main configuration..."
     if ! nginx -t 2>/dev/null; then
         error "nginx main configuration is invalid. Showing detailed error:"
@@ -770,7 +1100,6 @@ validate_nginx_setup() {
         return 1
     fi
     
-    # Check if nginx can bind to a test port (using nginx -t doesn't test binding)
     info "nginx main configuration is valid"
     return 0
 }
@@ -780,7 +1109,6 @@ ensure_nginx_running() {
     info "Checking nginx service status..."
     
     if command -v systemctl >/dev/null 2>&1; then
-        # Check if nginx is already running
         if systemctl is-active --quiet nginx; then
             info "nginx is already running"
             return 0
@@ -832,10 +1160,8 @@ ensure_nginx_running() {
     
     info "nginx service started successfully"
     
-    # Give nginx a moment to fully start
     sleep 2
     
-    # Verify it's actually running
     if command -v systemctl >/dev/null 2>&1; then
         if ! systemctl is-active --quiet nginx; then
             error "nginx service started but is not active"
@@ -879,23 +1205,19 @@ write_htpasswd() {
 ensure_dirs() {
     info "Creating required directories..."
     
-    # Create nginx config directory
     if ! mkdir -p "${CONF_DIR}"; then
         error "Failed to create nginx config directory: ${CONF_DIR}"
         return 1
     fi
     
-    # Create SSL directory
     if ! mkdir -p "${SSL_DIR}"; then
         error "Failed to create SSL directory: ${SSL_DIR}"
         return 1
     fi
     
-    # Ensure proper permissions
     chmod 755 "${CONF_DIR}" 2>/dev/null || true
     chmod 755 "${SSL_DIR}" 2>/dev/null || true
     
-    # Check if directories are writable
     if [[ ! -w "${CONF_DIR}" ]]; then
         error "Cannot write to nginx config directory: ${CONF_DIR}"
         return 1
@@ -914,13 +1236,11 @@ ensure_dirs() {
 disable_default_nginx_configs() {
     info "Disabling default nginx configurations that may conflict..."
     
-    # Disable default site in sites-enabled (Debian/Ubuntu style)
     if [[ -f "/etc/nginx/sites-enabled/default" ]]; then
         info "Disabling default nginx site..."
         rm -f "/etc/nginx/sites-enabled/default"
     fi
     
-    # Disable any other sites that might listen on port 80
     if [[ -d "/etc/nginx/sites-enabled" ]]; then
         for site in /etc/nginx/sites-enabled/*; do
             if [[ -f "$site" ]] && grep -q "listen.*80" "$site" 2>/dev/null; then
@@ -931,13 +1251,11 @@ disable_default_nginx_configs() {
         done
     fi
     
-    # Check for default server blocks in main nginx.conf
     if grep -q "server.*{" /etc/nginx/nginx.conf && grep -q "listen.*80" /etc/nginx/nginx.conf; then
         warn "Found server blocks listening on port 80 in main nginx.conf"
         warn "You may need to manually comment these out if nginx still fails to start"
     fi
     
-    # Remove default.conf if it exists and listens on port 80
     if [[ -f "/etc/nginx/conf.d/default.conf" ]] && grep -q "listen.*80" "/etc/nginx/conf.d/default.conf" 2>/dev/null; then
         info "Removing default.conf that listens on port 80..."
         rm -f "/etc/nginx/conf.d/default.conf"
@@ -950,26 +1268,22 @@ disable_default_nginx_configs() {
 check_nginx_prerequisites() {
     info "Checking nginx prerequisites..."
     
-    # Check if running as root
     if [[ "$(id -u)" -ne 0 ]]; then
         error "This script must be run as root for nginx configuration"
         return 1
     fi
     
-    # Check if nginx config directory exists and is accessible
     if [[ ! -d "/etc/nginx" ]]; then
         error "nginx configuration directory /etc/nginx does not exist"
         error "nginx may not be properly installed"
         return 1
     fi
     
-    # Check if nginx.conf exists
     if [[ ! -f "/etc/nginx/nginx.conf" ]]; then
         error "nginx main configuration file /etc/nginx/nginx.conf not found"
         return 1
     fi
     
-    # Check if conf.d directory exists or can be created
     if [[ ! -d "/etc/nginx/conf.d" ]]; then
         info "Creating /etc/nginx/conf.d directory..."
         if ! mkdir -p "/etc/nginx/conf.d"; then
@@ -978,13 +1292,11 @@ check_nginx_prerequisites() {
         fi
     fi
     
-    # Check if nginx main config includes conf.d
     if ! grep -q "include.*conf\.d.*\.conf" /etc/nginx/nginx.conf; then
         warn "nginx.conf may not include files from conf.d directory"
         warn "You may need to add: include /etc/nginx/conf.d/*.conf;"
     fi
     
-    # Disable conflicting default configurations
     disable_default_nginx_configs
     
     info "nginx prerequisites check passed"
@@ -1028,7 +1340,6 @@ write_nginx_conf() {
 
     info "Writing nginx configuration to ${conf_path}..."
     
-    # Verify required files exist before writing config
     if [[ ! -f "${CERT_PATH}" ]]; then
         error "SSL certificate not found: ${CERT_PATH}"
         return 1
@@ -1124,6 +1435,7 @@ check_port_conflict() {
 # MAIN EXECUTION LOGIC
 # ============================================================================
 
+# Main execution function
 main() {
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
         usage
@@ -1138,51 +1450,55 @@ main() {
     info "External HTTPS port: ${EXT_PORT}"
     info "Username: ${USERNAME}"
 
-    # Install nginx first
     install_nginx_if_needed
     
-    # Check nginx prerequisites
     if ! check_nginx_prerequisites; then
         error "nginx prerequisites check failed. Cannot proceed."
         exit 1
     fi
     
-    # Create required directories
     if ! ensure_dirs; then
         error "Failed to create required directories. Cannot proceed."
         exit 1
     fi
     
-    # Validate nginx setup before proceeding
     if ! validate_nginx_setup; then
         error "nginx setup validation failed. Cannot proceed."
         exit 1
     fi
     
-    # Check for port conflicts - exit if conflict found
     if ! check_port_conflict; then
         error "Cannot proceed due to port conflict. Exiting."
         exit 1
     fi
     
-    # Start nginx service with basic configuration
     if ! ensure_nginx_running; then
         error "Failed to start nginx service. Cannot proceed."
         exit 1
     fi
     
-    # Create authentication and SSL files
     prompt_password
     write_htpasswd
     generate_self_signed_cert
     
-    # Write configuration and reload nginx
     if ! write_nginx_conf; then
         error "Failed to write nginx configuration. Exiting."
         exit 1
     fi
+    
+    if [[ -n "$APP_BINDING" ]]; then
+        configure_firewall "$APP_PORT" "$EXT_PORT" "$APP_BINDING"
+    fi
 
     info "Done. Configuration created successfully!"
+    
+    if [[ "$APP_BINDING" == "0.0.0.0" ]]; then
+        echo
+        info "Security Summary:"
+        info "  ✓ Direct access to port ${APP_PORT} is now BLOCKED"
+        info "  ✓ Authenticated access available on port ${EXT_PORT}"
+        info "  ✓ Your app is now protected with basic authentication"
+    fi
 }
 
 main "$@"
