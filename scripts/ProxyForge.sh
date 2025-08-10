@@ -611,6 +611,11 @@ menu_setup_new_config() {
     generate_self_signed_cert
     write_nginx_conf
     
+    # Configure firewall
+    if [[ -n "$APP_BINDING" ]]; then
+        configure_firewall "$APP_PORT" "$EXT_PORT" "$APP_BINDING"
+    fi
+    
     info "Configuration created successfully!"
     echo "Press Enter to return to menu..."
     read -r
