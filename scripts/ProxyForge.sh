@@ -1264,8 +1264,14 @@ disable_default_nginx_configs() {
     local configs_removed=false
     
     if [[ -f "/etc/nginx/sites-enabled/default" ]]; then
-        if grep -q "Welcome to nginx" "/etc/nginx/sites-enabled/default" 2>/dev/null ||
-           grep -q "default_server" "/etc/nginx/sites-enabled/default" 2>/dev/null; then
+        local default_file="/etc/nginx/sites-enabled/default"
+        if [[ -L "$default_file" ]]; then
+            default_file="$(readlink -f "$default_file")"
+        fi
+        
+        if grep -q "listen.*80.*default_server" "$default_file" 2>/dev/null ||
+           grep -q "# Default server configuration" "$default_file" 2>/dev/null ||
+           (grep -q "listen.*80" "$default_file" 2>/dev/null && grep -q "server_name.*_" "$default_file" 2>/dev/null); then
             info "Removing standard nginx default site configuration"
             rm -f "/etc/nginx/sites-enabled/default"
             configs_removed=true
