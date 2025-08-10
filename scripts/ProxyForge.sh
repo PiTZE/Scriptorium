@@ -1257,40 +1257,28 @@ ensure_dirs() {
     return 0
 }
 
-# Remove only standard nginx default configurations that cause conflicts
+# Remove standard nginx default configurations that cause conflicts
 disable_default_nginx_configs() {
-    info "Checking for default nginx configurations that may conflict..."
+    info "Removing standard nginx default configurations..."
     
     local configs_removed=false
     
     if [[ -f "/etc/nginx/sites-enabled/default" ]]; then
-        local default_file="/etc/nginx/sites-enabled/default"
-        if [[ -L "$default_file" ]]; then
-            default_file="$(readlink -f "$default_file")"
-        fi
-        
-        if grep -q "listen.*80.*default_server" "$default_file" 2>/dev/null ||
-           grep -q "# Default server configuration" "$default_file" 2>/dev/null ||
-           (grep -q "listen.*80" "$default_file" 2>/dev/null && grep -q "server_name.*_" "$default_file" 2>/dev/null); then
-            info "Removing standard nginx default site configuration"
-            rm -f "/etc/nginx/sites-enabled/default"
-            configs_removed=true
-        fi
+        info "Removing /etc/nginx/sites-enabled/default"
+        rm -f "/etc/nginx/sites-enabled/default"
+        configs_removed=true
     fi
     
     if [[ -f "/etc/nginx/conf.d/default.conf" ]]; then
-        if grep -q "listen.*80" "/etc/nginx/conf.d/default.conf" 2>/dev/null &&
-           grep -q "server_name.*_" "/etc/nginx/conf.d/default.conf" 2>/dev/null; then
-            info "Removing standard nginx default.conf configuration"
-            rm -f "/etc/nginx/conf.d/default.conf"
-            configs_removed=true
-        fi
+        info "Removing /etc/nginx/conf.d/default.conf"
+        rm -f "/etc/nginx/conf.d/default.conf"
+        configs_removed=true
     fi
     
     if [[ "$configs_removed" == "true" ]]; then
-        info "Standard default configurations removed"
+        info "Default configurations removed"
     else
-        info "No standard default configurations found to remove"
+        info "No default configurations found"
     fi
 }
 
