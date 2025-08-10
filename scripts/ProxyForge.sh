@@ -377,21 +377,21 @@ configure_firewall() {
                 fi
             fi
             
+            info "Removing any existing allow rules for port ${app_port}..."
+            # Remove all existing allow rules for this port
+            while ufw status numbered | grep -q "ALLOW.*${app_port}"; do
+                local rule_num
+                rule_num=$(ufw status numbered | grep "ALLOW.*${app_port}" | head -1 | grep -o '^\[[0-9]*\]' | tr -d '[]')
+                if [[ -n "$rule_num" ]]; then
+                    ufw --force delete "${rule_num}"
+                    info "Removed existing allow rule #${rule_num} for port ${app_port}"
+                else
+                    break
+                fi
+            done
+            
             info "Allowing localhost access to port ${app_port}..."
             ufw allow from 127.0.0.1 to any port "${app_port}"
-            
-            info "Blocking external access to port ${app_port} (excluding proxy port ${proxy_port})..."
-            if [[ "${app_port}" != "${proxy_port}" ]]; then
-                ufw deny from any to any port "${app_port}"
-            else
-                # If ports are the same, only deny non-HTTPS traffic to avoid blocking the proxy
-                ufw deny "${app_port}/tcp"
-                ufw allow "${proxy_port}/tcp"
-            fi
-            
-            # Ensure proxy port is allowed after any deny rules
-            info "Re-confirming access to authenticated proxy on port ${proxy_port}..."
-            ufw allow "${proxy_port}"
             
             info "Firewall configured successfully!"
             info "  - Blocked: port ${app_port} (direct app access)"
