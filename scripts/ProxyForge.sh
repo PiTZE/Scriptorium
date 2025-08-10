@@ -124,7 +124,6 @@ interactive_setup() {
     info "Starting interactive setup..."
     echo
     
-    # Ask about app binding first
     local app_binding=""
     while true; do
         echo "Is your application currently listening on:"
@@ -152,9 +151,7 @@ interactive_setup() {
         fi
     done
     
-    # Handle external port based on app binding
     if [[ "$app_binding" == "localhost" ]]; then
-        # For localhost apps, proxy can use the same port
         while true; do
             read -r -p "What external HTTPS port should the proxy listen on? [default: same as app port (${APP_PORT})]: " input_ext_port
             if [[ -z "$input_ext_port" ]]; then
@@ -168,7 +165,6 @@ interactive_setup() {
             fi
         done
     else
-        # For 0.0.0.0 apps, suggest app_port + 1 as default
         local suggested_port=$((APP_PORT + 1))
         while true; do
             read -r -p "What external HTTPS port should the authenticated proxy listen on? [default: ${suggested_port}]: " input_ext_port
@@ -221,7 +217,6 @@ interactive_setup() {
     
     echo
     
-    # Store app binding for later use
     APP_BINDING="$app_binding"
     
     if [[ "${ASSUME_YES}" != "true" ]]; then
@@ -472,6 +467,7 @@ add_common_service_ports() {
         info "Added UFW rules for ports: ${added_ports[*]}"
     fi
 }
+
 # Test if the authenticated proxy is accessible
 test_proxy_accessibility() {
     local proxy_port="$1"
@@ -664,6 +660,10 @@ menu_modify_config() {
     echo "============================================================================"
     echo
     
+    if ! check_configs_exist; then
+        return
+    fi
+    
     local config_file
     config_file="$(select_config_file)"
     if [[ -z "$config_file" ]]; then
@@ -725,6 +725,10 @@ menu_remove_config() {
     echo "============================================================================"
     echo
     
+    if ! check_configs_exist; then
+        return
+    fi
+    
     local config_file
     config_file="$(select_config_file)"
     if [[ -z "$config_file" ]]; then
@@ -770,6 +774,10 @@ menu_view_config_details() {
     menu_header "Configuration Details"
     echo "============================================================================"
     echo
+    
+    if ! check_configs_exist; then
+        return
+    fi
     
     local config_file
     config_file="$(select_config_file)"
@@ -836,17 +844,34 @@ menu_reload_nginx() {
     read -r
 }
 
-# Select configuration file from available options
-select_config_file() {
+# Check if any configurations exist and show appropriate message
+check_configs_exist() {
+    if [[ ! -d "$CONF_DIR" ]]; then
+        warn "Nginx configuration directory not found: $CONF_DIR"
+        echo "Press Enter to return to main menu..."
+        read -r
+        return 1
+    fi
+    
     local configs
     configs=($(find "$CONF_DIR" -name "app_*_to_*.conf" -type f 2>/dev/null | sort))
     
     if [[ ${#configs[@]} -eq 0 ]]; then
-        warn "No ProxyForge configurations found."
-        echo "Press Enter to continue..."
+        info "No ProxyForge configurations found."
+        info "Create a new configuration first using option 1 from the main menu."
+        echo
+        echo "Press Enter to return to main menu..."
         read -r
-        return
+        return 1
     fi
+    
+    return 0
+}
+
+# Select configuration file from available options
+select_config_file() {
+    local configs
+    configs=($(find "$CONF_DIR" -name "app_*_to_*.conf" -type f 2>/dev/null | sort))
     
     echo "Available configurations:"
     echo
