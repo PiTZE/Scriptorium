@@ -1315,8 +1315,6 @@ check_nginx_prerequisites() {
         warn "You may need to add: include /etc/nginx/conf.d/*.conf;"
     fi
     
-    disable_default_nginx_configs
-    
     info "nginx prerequisites check passed"
     return 0
 }
@@ -1469,6 +1467,8 @@ main() {
     info "Username: ${USERNAME}"
 
     install_nginx_if_needed
+    
+    disable_default_nginx_configs
     
     if ! check_nginx_prerequisites; then
         error "nginx prerequisites check failed. Cannot proceed."
