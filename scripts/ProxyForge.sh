@@ -377,18 +377,11 @@ configure_firewall() {
                 fi
             fi
             
-            info "Removing any existing allow rules for port ${app_port}..."
-            # Remove all existing allow rules for this port (except localhost-specific ones)
-            while ufw status numbered | grep -E "ALLOW.*${app_port}[^0-9]" | grep -v "127.0.0.1"; do
-                local rule_num
-                rule_num=$(ufw status numbered | grep -E "ALLOW.*${app_port}[^0-9]" | grep -v "127.0.0.1" | head -1 | grep -o '^\[[0-9]*\]' | tr -d '[]')
-                if [[ -n "$rule_num" ]]; then
-                    info "Removing existing allow rule #${rule_num} for port ${app_port}"
-                    ufw --force delete "${rule_num}"
-                else
-                    break
-                fi
-            done
+            info "Removing any existing broad allow rules for port ${app_port}..."
+            ufw delete allow "${app_port}" 2>/dev/null || true
+            ufw delete allow "${app_port}/tcp" 2>/dev/null || true
+            ufw delete allow "${app_port}/udp" 2>/dev/null || true
+            info "Removed any existing broad allow rules for port ${app_port}"
             
             info "Allowing localhost access to port ${app_port}..."
             ufw allow from 127.0.0.1 to any port "${app_port}"
@@ -1429,7 +1422,12 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_cache_bypass \$http_upgrade;
+        
         proxy_buffering off;
+        proxy_read_timeout 86400;
     }
 }
 EOF
