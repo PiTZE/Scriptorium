@@ -377,8 +377,11 @@ configure_firewall() {
                 fi
             fi
             
-            info "Blocking direct access to port ${app_port}..."
-            ufw deny "${app_port}"
+            info "Allowing localhost access to port ${app_port}..."
+            ufw allow from 127.0.0.1 to any port "${app_port}"
+            
+            info "Blocking external access to port ${app_port}..."
+            ufw deny from any to any port "${app_port}"
             
             info "Firewall configured successfully!"
             info "  - Blocked: port ${app_port} (direct app access)"
@@ -1522,9 +1525,11 @@ main() {
         exit 1
     fi
     
-    if [[ -n "$APP_BINDING" ]]; then
-        configure_firewall "$APP_PORT" "$EXT_PORT" "$APP_BINDING"
+    # Always configure firewall (default to localhost if not specified)
+    if [[ -z "$APP_BINDING" ]]; then
+        APP_BINDING="localhost"
     fi
+    configure_firewall "$APP_PORT" "$EXT_PORT" "$APP_BINDING"
 
     info "Done. Configuration created successfully!"
     
