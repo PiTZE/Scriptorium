@@ -910,6 +910,42 @@ ensure_dirs() {
     return 0
 }
 
+# Disable conflicting default nginx configurations
+disable_default_nginx_configs() {
+    info "Disabling default nginx configurations that may conflict..."
+    
+    # Disable default site in sites-enabled (Debian/Ubuntu style)
+    if [[ -f "/etc/nginx/sites-enabled/default" ]]; then
+        info "Disabling default nginx site..."
+        rm -f "/etc/nginx/sites-enabled/default"
+    fi
+    
+    # Disable any other sites that might listen on port 80
+    if [[ -d "/etc/nginx/sites-enabled" ]]; then
+        for site in /etc/nginx/sites-enabled/*; do
+            if [[ -f "$site" ]] && grep -q "listen.*80" "$site" 2>/dev/null; then
+                local sitename=$(basename "$site")
+                warn "Disabling site '$sitename' that listens on port 80"
+                rm -f "$site"
+            fi
+        done
+    fi
+    
+    # Check for default server blocks in main nginx.conf
+    if grep -q "server.*{" /etc/nginx/nginx.conf && grep -q "listen.*80" /etc/nginx/nginx.conf; then
+        warn "Found server blocks listening on port 80 in main nginx.conf"
+        warn "You may need to manually comment these out if nginx still fails to start"
+    fi
+    
+    # Remove default.conf if it exists and listens on port 80
+    if [[ -f "/etc/nginx/conf.d/default.conf" ]] && grep -q "listen.*80" "/etc/nginx/conf.d/default.conf" 2>/dev/null; then
+        info "Removing default.conf that listens on port 80..."
+        rm -f "/etc/nginx/conf.d/default.conf"
+    fi
+    
+    info "Default configurations cleaned up"
+}
+
 # Check for common nginx setup issues
 check_nginx_prerequisites() {
     info "Checking nginx prerequisites..."
@@ -947,6 +983,9 @@ check_nginx_prerequisites() {
         warn "nginx.conf may not include files from conf.d directory"
         warn "You may need to add: include /etc/nginx/conf.d/*.conf;"
     fi
+    
+    # Disable conflicting default configurations
+    disable_default_nginx_configs
     
     info "nginx prerequisites check passed"
     return 0
