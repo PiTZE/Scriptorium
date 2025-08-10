@@ -1257,36 +1257,35 @@ ensure_dirs() {
     return 0
 }
 
-# Disable conflicting default nginx configurations
+# Remove only standard nginx default configurations that cause conflicts
 disable_default_nginx_configs() {
-    info "Disabling default nginx configurations that may conflict..."
+    info "Checking for default nginx configurations that may conflict..."
+    
+    local configs_removed=false
     
     if [[ -f "/etc/nginx/sites-enabled/default" ]]; then
-        info "Disabling default nginx site..."
-        rm -f "/etc/nginx/sites-enabled/default"
+        if grep -q "Welcome to nginx" "/etc/nginx/sites-enabled/default" 2>/dev/null ||
+           grep -q "default_server" "/etc/nginx/sites-enabled/default" 2>/dev/null; then
+            info "Removing standard nginx default site configuration"
+            rm -f "/etc/nginx/sites-enabled/default"
+            configs_removed=true
+        fi
     fi
     
-    if [[ -d "/etc/nginx/sites-enabled" ]]; then
-        for site in /etc/nginx/sites-enabled/*; do
-            if [[ -f "$site" ]] && grep -q "listen.*80" "$site" 2>/dev/null; then
-                local sitename=$(basename "$site")
-                warn "Disabling site '$sitename' that listens on port 80"
-                rm -f "$site"
-            fi
-        done
+    if [[ -f "/etc/nginx/conf.d/default.conf" ]]; then
+        if grep -q "listen.*80" "/etc/nginx/conf.d/default.conf" 2>/dev/null &&
+           grep -q "server_name.*_" "/etc/nginx/conf.d/default.conf" 2>/dev/null; then
+            info "Removing standard nginx default.conf configuration"
+            rm -f "/etc/nginx/conf.d/default.conf"
+            configs_removed=true
+        fi
     fi
     
-    if grep -q "server.*{" /etc/nginx/nginx.conf && grep -q "listen.*80" /etc/nginx/nginx.conf; then
-        warn "Found server blocks listening on port 80 in main nginx.conf"
-        warn "You may need to manually comment these out if nginx still fails to start"
+    if [[ "$configs_removed" == "true" ]]; then
+        info "Standard default configurations removed"
+    else
+        info "No standard default configurations found to remove"
     fi
-    
-    if [[ -f "/etc/nginx/conf.d/default.conf" ]] && grep -q "listen.*80" "/etc/nginx/conf.d/default.conf" 2>/dev/null; then
-        info "Removing default.conf that listens on port 80..."
-        rm -f "/etc/nginx/conf.d/default.conf"
-    fi
-    
-    info "Default configurations cleaned up"
 }
 
 # Check for common nginx setup issues
