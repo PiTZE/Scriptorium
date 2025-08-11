@@ -890,15 +890,22 @@ select_config_file() {
     
     echo "Available configurations:"
     echo
+    
+    # Force output flush before displaying menu items
+    exec 1>&1
+    
     local i=1
     for config in "${configs[@]}"; do
         local config_basename
         config_basename="$(basename "$config")"
-        menu_item "$i) $config_basename"
+        printf "${BLUE}  %d) %s${NC}\n" "$i" "$config_basename"
         ((i++))
     done
-    menu_item "0) Cancel"
+    printf "${BLUE}  0) Cancel${NC}\n"
     echo
+    
+    # Force another flush after menu display
+    exec 1>&1
     
     while true; do
         read -r -p "Select configuration [0-${#configs[@]}]: " choice
