@@ -570,7 +570,7 @@ show_main_menu() {
             5) menu_view_config_details ;;
             6) menu_test_nginx ;;
             7) menu_reload_nginx ;;
-            0) echo "Goodbye!"; exit 0 ;;
+            0) echo "Sihdir."; exit 0 ;;
             *) echo "Invalid option. Press Enter to continue..."; read -r ;;
         esac
     done
