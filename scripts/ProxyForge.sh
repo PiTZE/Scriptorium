@@ -634,7 +634,7 @@ menu_list_configs() {
     if [[ ${#configs[@]} -eq 0 ]]; then
         info "No ProxyForge configurations found."
     else
-        printf "%-5s %-30s %-10s %-10s %-15s\n" "No." "Config File" "App Port" "Ext Port" "Status"
+        echo "No.  Config File                    App Port  Ext Port  Status"
         echo "------------------------------------------------------------------------"
         
         local i=1
@@ -658,7 +658,7 @@ menu_list_configs() {
                 status="Invalid"
             fi
             
-            printf "%-5s %-30s %-10s %-10s %-15s\n" "$i" "$config_basename" "$app_port" "$ext_port" "$status"
+            echo "$i    $config_basename    $app_port    $ext_port    $status"
             ((i++))
         done
     fi
