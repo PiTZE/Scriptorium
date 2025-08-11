@@ -639,11 +639,11 @@ menu_list_configs() {
         
         local i=1
         for config in "${configs[@]}"; do
-            local basename
-            basename="$(basename "$config")"
+            local config_basename
+            config_basename="$(basename "$config")"
             local app_port ext_port
             
-            if [[ "$basename" =~ app_([0-9]+)_to_([0-9]+)\.conf ]]; then
+            if [[ "$config_basename" =~ app_([0-9]+)_to_([0-9]+)\.conf ]]; then
                 app_port="${BASH_REMATCH[1]}"
                 ext_port="${BASH_REMATCH[2]}"
             else
@@ -658,7 +658,7 @@ menu_list_configs() {
                 status="Invalid"
             fi
             
-            printf "%-5s %-30s %-10s %-10s %-15s\n" "$i" "$basename" "$app_port" "$ext_port" "$status"
+            printf "%-5s %-30s %-10s %-10s %-15s\n" "$i" "$config_basename" "$app_port" "$ext_port" "$status"
             ((i++))
         done
     fi
@@ -685,14 +685,14 @@ menu_modify_config() {
         return
     fi
     
-    local basename
-    basename="$(basename "$config_file")"
+    local config_basename
+    config_basename="$(basename "$config_file")"
     
-    if [[ "$basename" =~ app_([0-9]+)_to_([0-9]+)\.conf ]]; then
+    if [[ "$config_basename" =~ app_([0-9]+)_to_([0-9]+)\.conf ]]; then
         APP_PORT="${BASH_REMATCH[1]}"
         EXT_PORT="${BASH_REMATCH[2]}"
     else
-        error "Cannot parse configuration file name: $basename"
+        error "Cannot parse configuration file name: $config_basename"
         echo "Press Enter to continue..."
         read -r
         return
@@ -705,7 +705,7 @@ menu_modify_config() {
         USERNAME="$DEFAULT_USERNAME"
     fi
     
-    info "Current configuration for $basename:"
+    info "Current configuration for $config_basename:"
     info "  App Port: $APP_PORT"
     info "  External Port: $EXT_PORT"
     info "  Username: $USERNAME"
@@ -750,14 +750,14 @@ menu_remove_config() {
         return
     fi
     
-    local basename
-    basename="$(basename "$config_file")"
+    local config_basename
+    config_basename="$(basename "$config_file")"
     
-    if [[ "$basename" =~ app_([0-9]+)_to_([0-9]+)\.conf ]]; then
+    if [[ "$config_basename" =~ app_([0-9]+)_to_([0-9]+)\.conf ]]; then
         local app_port="${BASH_REMATCH[1]}"
         local ext_port="${BASH_REMATCH[2]}"
     else
-        error "Cannot parse configuration file name: $basename"
+        error "Cannot parse configuration file name: $config_basename"
         echo "Press Enter to continue..."
         read -r
         return
@@ -800,10 +800,10 @@ menu_view_config_details() {
         return
     fi
     
-    local basename
-    basename="$(basename "$config_file")"
+    local config_basename
+    config_basename="$(basename "$config_file")"
     
-    info "Configuration file: $basename"
+    info "Configuration file: $config_basename"
     info "Full path: $config_file"
     echo
     
@@ -892,9 +892,9 @@ select_config_file() {
     echo
     local i=1
     for config in "${configs[@]}"; do
-        local basename
-        basename="$(basename "$config")"
-        menu_item "$i) $basename"
+        local config_basename
+        config_basename="$(basename "$config")"
+        menu_item "$i) $config_basename"
         ((i++))
     done
     menu_item "0) Cancel"
