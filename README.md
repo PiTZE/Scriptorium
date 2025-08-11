@@ -1,6 +1,6 @@
 # Scriptorium
 
-A collection of utility scripts for system administration and automation.
+A collection of utility scripts for my stuff.
 
 ## Scripts
 
@@ -9,7 +9,7 @@ A collection of utility scripts for system administration and automation.
 Automatically sets up a secure HTTPS reverse proxy with basic authentication using nginx.
 
 **Features:**
-- Installs nginx and dependencies
+- Installs nginx, ufw and their dependencies
 - Generates self-signed SSL certificates (or uses provided ones)
 - Configures basic authentication
 - Sets up secure reverse proxy with modern SSL settings
@@ -41,7 +41,6 @@ When run without arguments, ProxyForge will guide you through an interactive set
 - Prompts for basic auth username
 - Shows configuration summary before proceeding
 - Confirms setup before making system changes
-```
 
 ## Requirements
 
