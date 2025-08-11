@@ -888,17 +888,17 @@ select_config_file() {
     local configs
     configs=($(find "$CONF_DIR" -name "app_*_to_*.conf" -type f 2>/dev/null | sort))
     
-    echo "Available configurations:"
-    echo
+    echo "Available configurations:" >&2
+    echo >&2
     local i=1
     for config in "${configs[@]}"; do
         local config_basename
         config_basename="$(basename "$config")"
-        menu_item "$i) $config_basename"
+        menu_item "$i) $config_basename" >&2
         ((i++))
     done
-    menu_item "0) Cancel"
-    echo
+    menu_item "0) Cancel" >&2
+    echo >&2
     
     while true; do
         read -r -p "Select configuration [0-${#configs[@]}]: " choice
