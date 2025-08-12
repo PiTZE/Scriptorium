@@ -306,7 +306,7 @@ detect_pwa_resources() {
     local app_port="$1"
     local detected_resources=()
     
-    info "Scanning for PWA and static resources..."
+    info "Scanning for PWA and static resources..." >&2
     
     local common_paths=(
         "/manifest.json"
@@ -325,7 +325,7 @@ detect_pwa_resources() {
         
         if [[ "$response_code" == "200" ]]; then
             detected_resources+=("$path")
-            info "Detected resource: $path"
+            info "Detected resource: $path" >&2
         fi
     done
     
@@ -348,7 +348,7 @@ detect_pwa_resources() {
             done
             if [[ "$already_detected" == "false" ]]; then
                 detected_resources+=("$manifest_path")
-                info "Detected manifest: $manifest_path"
+                info "Detected manifest: $manifest_path" >&2
             fi
         fi
     fi
