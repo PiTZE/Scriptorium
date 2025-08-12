@@ -36,7 +36,7 @@ usage() { cat <<'USAGE'
 Usage: ProxyForge.sh [options]
 
 Options:
-  -a, --app-port PORT        Local app port to proxy (default: 7314)
+  -a, --app-port PORT        Local app port to proxy
   -e, --external-port PORT   External HTTPS port to listen on (default: same as app port)
   -u, --username NAME        Basic auth username (default: user)
   -y, --yes                  Assume yes for prompts and overwrite existing files
@@ -359,7 +359,7 @@ menu_setup_new_config() {
     echo "============================================================================"
     echo
     
-    APP_PORT="$DEFAULT_APP_PORT"
+    APP_PORT=""
     EXT_PORT="$DEFAULT_EXT_PORT"
     USERNAME="$DEFAULT_USERNAME"
     CERT_PATH=""
@@ -861,10 +861,9 @@ interactive_setup() {
     done
     
     while true; do
-        read -r -p "What port is your local application running on? [default: ${DEFAULT_APP_PORT}]: " input_port
+        read -r -p "What port is your local application running on?: " input_port
         if [[ -z "$input_port" ]]; then
-            APP_PORT="$DEFAULT_APP_PORT"
-            break
+            echo "Port number is required. Please enter a valid port number (1-65535)."
         elif [[ "$input_port" =~ ^[0-9]+$ ]] && [[ "$input_port" -ge 1 ]] && [[ "$input_port" -le 65535 ]]; then
             APP_PORT="$input_port"
             break
