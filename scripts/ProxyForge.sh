@@ -302,6 +302,60 @@ test_proxy_accessibility() {
     fi
 }
 
+detect_pwa_resources() {
+    local app_port="$1"
+    local detected_resources=()
+    
+    info "Scanning for PWA and static resources..."
+    
+    local common_paths=(
+        "/manifest.json"
+        "/sw.js"
+        "/service-worker.js"
+        "/js/sw.js"
+        "/static/sw.js"
+        "/favicon.ico"
+        "/robots.txt"
+        "/sitemap.xml"
+    )
+    
+    for path in "${common_paths[@]}"; do
+        local response_code
+        response_code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${app_port}${path}" --connect-timeout 3 --max-time 5 2>/dev/null || echo "000")
+        
+        if [[ "$response_code" == "200" ]]; then
+            detected_resources+=("$path")
+            info "Detected resource: $path"
+        fi
+    done
+    
+    local html_content
+    html_content=$(curl -s "http://127.0.0.1:${app_port}/" --connect-timeout 3 --max-time 5 2>/dev/null || echo "")
+    
+    if [[ -n "$html_content" ]]; then
+        local manifest_path
+        manifest_path=$(echo "$html_content" | grep -o 'rel="manifest"[^>]*href="[^"]*"' | sed 's/.*href="\([^"]*\)".*/\1/' | head -1)
+        if [[ -n "$manifest_path" && "$manifest_path" != /* ]]; then
+            manifest_path="/$manifest_path"
+        fi
+        if [[ -n "$manifest_path" ]]; then
+            local already_detected=false
+            for resource in "${detected_resources[@]}"; do
+                if [[ "$resource" == "$manifest_path" ]]; then
+                    already_detected=true
+                    break
+                fi
+            done
+            if [[ "$already_detected" == "false" ]]; then
+                detected_resources+=("$manifest_path")
+                info "Detected manifest: $manifest_path"
+            fi
+        fi
+    fi
+    
+    printf '%s\n' "${detected_resources[@]}"
+}
+
 # ============================================================================
 # MENU SYSTEM FUNCTIONS
 # ============================================================================
@@ -1353,6 +1407,9 @@ write_nginx_conf() {
         return 1
     fi
 
+    local pwa_resources
+    mapfile -t pwa_resources < <(detect_pwa_resources "$APP_PORT")
+
     cat > "${conf_path}" <<EOF
 server {
     listen 0.0.0.0:${EXT_PORT} ssl http2;
@@ -1365,10 +1422,32 @@ server {
 
     add_header Strict-Transport-Security "max-age=31536000" always;
 
-    auth_basic "Restricted";
-    auth_basic_user_file ${htfile};
+EOF
 
+    if [[ ${#pwa_resources[@]} -gt 0 ]]; then
+        echo "    # PWA/Static resources (no authentication required)" >> "${conf_path}"
+        for resource in "${pwa_resources[@]}"; do
+            cat >> "${conf_path}" <<EOF
+    location = ${resource} {
+        proxy_pass http://127.0.0.1:${APP_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+EOF
+        done
+        echo >> "${conf_path}"
+    fi
+
+    cat >> "${conf_path}" <<EOF
+    # Main application (authentication required)
     location / {
+        auth_basic "Restricted";
+        auth_basic_user_file ${htfile};
+        
         proxy_pass http://127.0.0.1:${APP_PORT};
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
@@ -1398,6 +1477,9 @@ EOF
     fi
 
     info "Wrote nginx config: ${conf_path}"
+    if [[ ${#pwa_resources[@]} -gt 0 ]]; then
+        info "Configured ${#pwa_resources[@]} PWA/static resources without authentication"
+    fi
     info "Reverse proxy available at: https://<your-host>:${EXT_PORT}/ (self-signed cert)"
 }
 
